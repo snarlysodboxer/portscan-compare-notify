@@ -1,4 +1,4 @@
-# portscan-unfiltered-compare-notify
+# portscan-compare-notify
 Use Golang to parse and notify about Nmap results compared to a list of expected ports
 
 #### Usage
@@ -25,5 +25,5 @@ docker run --rm \
   --env SMTP_SERVER_ADDRESS=smtp.gmail.com:587 \
   --env SMTP_USER_ADDRESS=my_addy@example.com \
   --env SMTP_PASSWORD=my_pass \
-  snarlysodboxer/nmap-golang:latest
+  snarlysodboxer/portscan-compare-notify:latest
 ```
