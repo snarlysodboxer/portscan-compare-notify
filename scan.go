@@ -82,12 +82,13 @@ func main() {
 	// Host and it's expected ports
 	host := os.Getenv("HOST")
 	expected_ports_str := os.Getenv("EXPECTED_PORTS")
+	port_range := os.Getenv("PORT_RANGE")
 
 	// Nmap --min-parallelism
 	parallelism := os.Getenv("PARALLELISM")
 
 	// SMTP stuff
-	to_address := os.Getenv("TO_ADDRESS")
+	to_addresses := strings.Fields(os.Getenv("TO_ADDRESSES"))
 	from_address := os.Getenv("FROM_ADDRESS")
 	server_address := os.Getenv("SMTP_SERVER_ADDRESS")
 	user_address := os.Getenv("SMTP_USER_ADDRESS")
@@ -106,13 +107,14 @@ func main() {
 
 	// Run Nmap and grep output
 	var found_ports_data bytes.Buffer
-	if err := Execute(&found_ports_data,
+	err := Execute(&found_ports_data,
 		exec.Command(
 			"nmap", "-PN", "--min-parallelism", parallelism,
-			"-n", "-sS", "-p1-65535", "--reason", host,
+			"-n", "-sS", fmt.Sprintf("-p%s", port_range), "--reason", host,
 		),
 		exec.Command("grep", "-o", "^[0-9]*"),
-	); err != nil {
+	)
+	if err != nil {
 		log.Fatalln("Error with Execute: %v", err)
 	}
 
@@ -136,7 +138,7 @@ func main() {
 			difference, expected_ports_ints_slice,
 		)
 		const layout = "Mon, 2 Jan 2006 15:04:05 -0700"
-		body := "From: " + from_address + "\r\nTo: " + to_address + "\r\nSubject: " + subject +
+		body := "From: " + from_address + "\r\nTo: " + strings.Join(to_addresses, " ") + "\r\nSubject: " + subject +
 			"\r\nDate: " + time.Now().Format(layout) + "\r\n\r\n" + message
 		domain, _, err := net.SplitHostPort(server_address)
 		if err != nil {
@@ -144,7 +146,7 @@ func main() {
 		}
 		auth := smtp.PlainAuth("", user_address, password, domain)
 		err = smtp.SendMail(server_address, auth, from_address,
-			[]string{to_address}, []byte(body))
+			to_addresses, []byte(body))
 		if err != nil {
 			log.Fatalf("Error with smtp.SendMail: %v", err)
 		}
