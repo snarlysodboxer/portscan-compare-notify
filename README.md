@@ -3,8 +3,9 @@ Use Golang to parse and notify about Nmap results compared to a list of expected
 
 #### Usage
 
-###### dependancies
-* nmap (installed in the docker image below)
+###### dependancies (installed in the docker image below)
+* Golang ~1.4
+* nmap
 
 ###### example build and usage
 ```
@@ -37,7 +38,7 @@ sudo ./scan \
   --password=my-pass
 ```
 
-###### E.G. using Docker
+###### example using Docker
 ```
 docker run --rm \
   snarlysodboxer/portscan-compare-notify:latest \
