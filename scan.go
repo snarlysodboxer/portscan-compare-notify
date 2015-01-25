@@ -4,56 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	flag "github.com/ogier/pflag"
-	"io"
 	"log"
 	"net"
 	"net/smtp"
-	//"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
-
-func Execute(output_buffer *bytes.Buffer, stack ...*exec.Cmd) (err error) {
-	var error_buffer bytes.Buffer
-	pipe_stack := make([]*io.PipeWriter, len(stack)-1)
-	i := 0
-	for ; i < len(stack)-1; i++ {
-		stdin_pipe, stdout_pipe := io.Pipe()
-		stack[i].Stdout = stdout_pipe
-		stack[i].Stderr = &error_buffer
-		stack[i+1].Stdin = stdin_pipe
-		pipe_stack[i] = stdout_pipe
-	}
-	stack[i].Stdout = output_buffer
-	stack[i].Stderr = &error_buffer
-
-	if err := call(stack, pipe_stack); err != nil {
-		log.Fatalln(string(error_buffer.Bytes()), err)
-	}
-	return err
-}
-
-func call(stack []*exec.Cmd, pipes []*io.PipeWriter) (err error) {
-	if stack[0].Process == nil {
-		if err = stack[0].Start(); err != nil {
-			return err
-		}
-	}
-	if len(stack) > 1 {
-		if err = stack[1].Start(); err != nil {
-			return err
-		}
-		defer func() {
-			if err == nil {
-				pipes[0].Close()
-				err = call(stack[1:], pipes[1:])
-			}
-		}()
-	}
-	return stack[0].Wait()
-}
 
 func compareMapAlternate(X, Y []int) []int {
 	counts := make(map[int]int)
@@ -118,38 +77,68 @@ func main() {
 		expected_ports_ints_slice = append(expected_ports_ints_slice, expected_port_int)
 	}
 
-	// Run Nmap and grep output
-	var found_ports_data bytes.Buffer
-	err := Execute(&found_ports_data,
-		exec.Command(
-			"nmap", "-PN", "--min-parallelism", *parallelism,
-			"-n", "-sS", fmt.Sprintf("-p%s", *port_range), "--reason", *host,
-		),
-		exec.Command("grep", "-o", "^[0-9]*"),
-	)
+	// Run Nmap and record output
+	command := exec.Command("nmap", "-PN", "--min-parallelism", *parallelism,
+		"-n", "-sS", fmt.Sprintf("-p%s", *port_range), "--reason", *host)
+	var stdout bytes.Buffer
+	command.Stdout = &stdout
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	err := command.Run()
+	var std_output = stdout.String()
+	var std_error = stderr.String()
 	if err != nil {
-		log.Fatalln("Error with Execute: %v", err)
+		log.Printf("Error with command.Run():\n%v\n", err)
+		log.Fatalf("This is the stderr:\n%s\n", std_error)
 	}
 
-	// Convert greped output string to int slice
+	//  grep Nmap for ports
+	ports_regex := regexp.MustCompilePOSIX("^[0-9]*")
+	found_ports_strings := strings.Fields(strings.Join(ports_regex.FindAllString(std_output, -1), " "))
+	//  grep Nmap for 'Not shown'
+	not_shown_regex := regexp.MustCompilePOSIX("^Not shown:.*")
+	not_shown_strings := not_shown_regex.FindAllString(std_output, -1)
+	////  grep 'Not shown' for 'closed'
+	closed_regex := regexp.MustCompilePOSIX("closed")
+	not_shown_closed := closed_regex.MatchString(strings.Join(not_shown_strings, " "))
+	////  grep 'Not shown' for number of ports
+	not_shown_ports_regex := regexp.MustCompilePOSIX("[0-9]*")
+	not_shown_number := not_shown_ports_regex.FindAllString(strings.Join(not_shown_strings, " "), -1)
+
+	// Convert greped ports string slice to int slice
 	found_ports_ints_slice := []int{}
-	for _, found_port_string := range strings.Fields(found_ports_data.String()) {
+	for _, found_port_string := range found_ports_strings {
 		found_port_int, err := strconv.Atoi(found_port_string)
 		if err != nil {
-			log.Fatalln("Error with strconv.Atoi: %v", err)
+			log.Fatalf("Error converting string '%s' to an integer: %v\n", found_port_string, err)
+			//log.Fatalf("Error with strconv.Atoi: %v", err)
 		}
 		found_ports_ints_slice = append(found_ports_ints_slice, found_port_int)
 	}
 
-	// Compare and email if needed
+	// Compare and setup subject and message
 	difference := compareMapAlternate(found_ports_ints_slice, expected_ports_ints_slice)
-	if len(difference) != 0 {
-
-		subject := fmt.Sprintf("Unfiltered ports found on %s", *host)
-		message := fmt.Sprintf(
-			"The following ports were found unfiltered and are not part of the expected set:\n\n%d.\n\nThe expected set is:\n\n%d.",
+	var subject = fmt.Sprintf("Unfiltered ports found on %s", *host)
+	var message string
+	if len(difference) != 0 && not_shown_closed {
+		message = fmt.Sprintf(
+			"The following ports were found unfiltered and are not part of the expected set:\n\n%d.\n\nThere are %s closed ports that are not shown.\n\nThe expected set was:\n\n%d.",
+			difference, not_shown_number, expected_ports_ints_slice,
+		)
+	} else if len(difference) != 0 {
+		message = fmt.Sprintf(
+			"The following ports were found unfiltered and are not part of the expected set:\n\n%d.\n\nThe expected set was:\n\n%d.",
 			difference, expected_ports_ints_slice,
 		)
+	} else if not_shown_closed {
+		message = fmt.Sprintf(
+			"There are %s closed ports that are not shown.\n\nThe expected set is:\n\n%d.",
+			not_shown_number, expected_ports_ints_slice,
+		)
+	}
+
+	// Email if needed
+	if len(difference) != 0 || not_shown_closed {
 		const layout = "Mon, 2 Jan 2006 15:04:05 -0700"
 		body := "From: " + *from_address + "\r\nTo: " + *to_addresses + "\r\nSubject: " + subject +
 			"\r\nDate: " + time.Now().Format(layout) + "\r\n\r\n" + message

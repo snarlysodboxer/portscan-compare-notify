@@ -3,9 +3,28 @@ Use Golang to parse and notify about Nmap results compared to a list of expected
 
 #### Usage
 
-E.G. build and run
+###### dependancies
+* nmap (installed in the docker image below)
+
+###### example build and usage
 ```
 go build scan.go
+# run it without flags to see the needed settings
+./scan
+Usage:
+  -e, --expected="": space separated list of ports that are expected to be found unfiltered (unfiltered = open or closed)
+  -f, --from="": the 'from' email address
+  -h, --host="": IP or resolvable hostname
+  -m, --parallelism="": the Nmap --min-parrallelism setting, E.G. '1024'
+  -x, --password="": the SMTP user password
+  -p, --range="": dash separated port range to scan, E.G. '1-65535'
+  -s, --server="": the SMTP server address, E.G 'smtp.example.com:587'
+  -t, --to="": space separated list of 'to' address(es)
+  -u, --username="": the SMTP username or email address
+```
+
+###### example binary run
+```
 sudo ./scan \
   --host=me.example.com \
   --range=1-65535 \
@@ -18,7 +37,7 @@ sudo ./scan \
   --password=my-pass
 ```
 
-E.G. using Docker
+###### E.G. using Docker
 ```
 docker run --rm \
   snarlysodboxer/portscan-compare-notify:latest \
@@ -33,6 +52,6 @@ docker run --rm \
   --password=my-pass
 ```
 
-TODO
-* Account for unshown ports that are 'closed'
+###### TODO
 * Document better
+* Refactor
