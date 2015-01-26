@@ -15,10 +15,10 @@ import (
 )
 
 // Returns the expected-unfound and unexpected-found
-func comparePorts(expected_ports, found_ports []int) ([]int, []int) {
-	expected_unfound := compare(expected_ports, found_ports)
-	unexpected_found := compare(found_ports, expected_ports)
-	return expected_unfound, unexpected_found
+func comparePorts(expectedPorts, foundPorts []int) ([]int, []int) {
+	expectedUnfound := compare(expectedPorts, foundPorts)
+	unexpectedFound := compare(foundPorts, expectedPorts)
+	return expectedUnfound, unexpectedFound
 }
 
 func compare(X, Y []int) []int {
@@ -62,19 +62,88 @@ func convertStringToIntSlice(str *string) []int {
 	return integers
 }
 
+func nmapRun(parallelism, portRange, host *string) string {
+	command := exec.Command("nmap", "-PN", "--min-parallelism", *parallelism,
+		"-n", "-sS", fmt.Sprintf("-p%s", *portRange), "--reason", *host)
+	var stdout bytes.Buffer
+	command.Stdout = &stdout
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	err := command.Run()
+	stdOut := stdout.String()
+	stdErr := stderr.String()
+	if err != nil {
+		log.Printf("Error with command.Run():\n%v\n", err)
+		log.Fatalf("This is the stderr:\n%s\n", stdErr)
+	}
+	return stdOut
+}
+
+func removeEmptyStrings(strings []string) []string {
+	var newStrings []string
+	for _, str := range strings {
+		if str != "" {
+			newStrings = append(newStrings, str)
+		}
+	}
+	return newStrings
+}
+
+// foundPortsString, notShownBool, notShownQuantity
+func grepNmap(nmapOutput string) (string, bool, []string) {
+	portsRegex := regexp.MustCompilePOSIX("^[0-9]*")
+	foundPortsString := strings.Join(removeEmptyStrings(portsRegex.FindAllString(nmapOutput, -1)), " ")
+	//  grep Nmap for 'Not shown'
+	notShownRegex := regexp.MustCompilePOSIX("^Not shown:.*")
+	notShownString := strings.Join(removeEmptyStrings(notShownRegex.FindAllString(nmapOutput, -1)), " ")
+	////  grep 'Not shown' for 'closed'
+	closedRegex := regexp.MustCompilePOSIX("closed")
+	notShownBool := closedRegex.MatchString(notShownString)
+	////  grep 'Not shown' for number of ports
+	notShownPortsRegex := regexp.MustCompilePOSIX("[0-9]*")
+	notShownQuantity := removeEmptyStrings(notShownPortsRegex.FindAllString(notShownString, -1))
+	return foundPortsString, notShownBool, notShownQuantity
+}
+
+func message(expectedPorts, foundPorts []int, notShownBool bool, notShownQuantity []string, expectedUnfoundPorts, unexpectedFoundPorts []int) string {
+	var message string
+	if len(expectedUnfoundPorts) != 0 {
+		message += fmt.Sprintf(
+			"The following ports were found filtered but were expected to be unfiltered:\n\n%d.\n\n",
+			expectedUnfoundPorts,
+		)
+	}
+	if len(unexpectedFoundPorts) != 0 {
+		message += fmt.Sprintf(
+			"The following ports were found unfiltered and are not part of the expected set:\n\n%d.\n\n",
+			unexpectedFoundPorts,
+		)
+	}
+	if notShownBool {
+		message += fmt.Sprintf("There are %s unfiltered ports that are not shown.\n\n", notShownQuantity)
+	}
+	message += fmt.Sprintf("The expected set was:\n\n%d.\n\n", expectedPorts)
+	message += "\t[[Unfiltered = 'open' or 'closed' (firewall is open)]]\n"
+	message += "\t[[Filtered = no response/timeout (firewall is closed)]]\n"
+	message += "\t[['open' usually = SYN-ACK]]\n"
+	message += "\t[['closed' usually = RST]]\n"
+	message += "\t[[See Nmap manual for more details.]]"
+	return message
+}
+
 func main() {
 	// Flags
 	//// Host and it's expected ports
 	host := flag.StringP("host", "h", "", "IP or resolvable hostname")
-	port_range := flag.StringP("range", "p", "", "dash separated port range to scan, E.G. '1-65535'")
-	expected_ports_string := flag.StringP("expected", "e", "",
+	portRange := flag.StringP("range", "p", "", "dash separated port range to scan, E.G. '1-65535'")
+	expectedPortsString := flag.StringP("expected", "e", "",
 		"space separated list of ports that are expected to be found unfiltered (unfiltered = open or closed)")
 
 	//// SMTP stuff
-	to_addresses := flag.StringP("to", "t", "", "space separated list of 'to' address(es)")
-	from_address := flag.StringP("from", "f", "", "the 'from' email address")
-	server_address := flag.StringP("server", "s", "", "the SMTP server address, E.G 'smtp.example.com:587'")
-	user_address := flag.StringP("username", "u", "", "the SMTP username or email address")
+	toAddresses := flag.StringP("to", "t", "", "space separated list of 'to' address(es)")
+	fromAddress := flag.StringP("from", "f", "", "the 'from' email address")
+	serverAddress := flag.StringP("server", "s", "", "the SMTP server address, E.G 'smtp.example.com:587'")
+	userAddress := flag.StringP("username", "u", "", "the SMTP username or email address")
 	password := flag.StringP("password", "x", "", "the SMTP user password")
 
 	//// Nmap --min-parallelism
@@ -91,77 +160,37 @@ func main() {
 	}
 
 	// Convert EXPECTED_PORTS string to int slice
-	expected_ports := convertStringToIntSlice(expected_ports_string)
+	expectedPorts := convertStringToIntSlice(expectedPortsString)
 
 	// Run Nmap and record output
-	command := exec.Command("nmap", "-PN", "--min-parallelism", *parallelism,
-		"-n", "-sS", fmt.Sprintf("-p%s", *port_range), "--reason", *host)
-	var stdout bytes.Buffer
-	command.Stdout = &stdout
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	err := command.Run()
-	var std_output = stdout.String()
-	var std_error = stderr.String()
-	if err != nil {
-		log.Printf("Error with command.Run():\n%v\n", err)
-		log.Fatalf("This is the stderr:\n%s\n", std_error)
-	}
+	nmapOutput := nmapRun(parallelism, portRange, host)
 
-	//  grep Nmap for ports
-	ports_regex := regexp.MustCompilePOSIX("^[0-9]*")
-	found_ports_string := strings.Join(ports_regex.FindAllString(std_output, -1), " ")
-	//  grep Nmap for 'Not shown'
-	not_shown_regex := regexp.MustCompilePOSIX("^Not shown:.*")
-	not_shown_strings := not_shown_regex.FindAllString(std_output, -1)
-	////  grep 'Not shown' for 'closed'
-	closed_regex := regexp.MustCompilePOSIX("closed")
-	not_shown_closed := closed_regex.MatchString(strings.Join(not_shown_strings, " "))
-	////  grep 'Not shown' for number of ports
-	not_shown_ports_regex := regexp.MustCompilePOSIX("[0-9]*")
-	not_shown_number := not_shown_ports_regex.FindAllString(strings.Join(not_shown_strings, " "), -1)
+	// Grep Nmap output
+	foundPortsString, notShownBool, notShownQuantity := grepNmap(nmapOutput)
 
 	// Convert greped ports string to int slice
-	found_ports := convertStringToIntSlice(&found_ports_string)
+	foundPorts := convertStringToIntSlice(&foundPortsString)
 
-	// Compare and setup subject and message
-	expected_unfound_ports, unexpected_found_ports := comparePorts(expected_ports, found_ports)
-	var subject = fmt.Sprintf("Unfiltered ports found on %s", *host)
-	var message string
-	if len(expected_unfound_ports) != 0 {
-		message += fmt.Sprintf(
-			"The following ports were found filtered but were expected to be unfiltered:\n\n%d.\n\n",
-			expected_unfound_ports,
-		)
-	}
-	if len(unexpected_found_ports) != 0 {
-		message += fmt.Sprintf(
-			"The following ports were found unfiltered and are not part of the expected set:\n\n%d.\n\n",
-			unexpected_found_ports,
-		)
-	}
-	if not_shown_closed {
-		message += fmt.Sprintf("There are %s unfiltered ports that are not shown.\n\n", not_shown_number)
-	}
-	message += fmt.Sprintf("The expected set was:\n\n%d.\n\n", expected_ports)
-	message += "\t[[Unfiltered = 'open' or 'closed' (firewall is open)]]\n"
-	message += "\t[[Filtered = no response/timeout (firewall is closed)]]\n"
-	message += "\t[['open' usually = SYN-ACK]]\n"
-	message += "\t[['closed' usually = RST]]\n"
-	message += "\t[[See Nmap manual for more details.]]"
+	// Compare
+	expectedUnfoundPorts, unexpectedFoundPorts := comparePorts(expectedPorts, foundPorts)
+
+	// Setup message
+	message := message(expectedPorts, foundPorts, notShownBool, notShownQuantity,
+		expectedUnfoundPorts, unexpectedFoundPorts)
 
 	// Email if needed
-	if len(expected_unfound_ports) != 0 || len(unexpected_found_ports) != 0 || not_shown_closed {
-		const layout = "Mon, 2 Jan 2006 15:04:05 -0700"
-		body := "From: " + *from_address + "\r\nTo: " + *to_addresses + "\r\nSubject: " + subject +
-			"\r\nDate: " + time.Now().Format(layout) + "\r\n\r\n" + message
-		domain, _, err := net.SplitHostPort(*server_address)
+	if len(expectedUnfoundPorts) != 0 || len(unexpectedFoundPorts) != 0 || notShownBool {
+		var subject = fmt.Sprintf("Unexpected unfiltered ports found on %s", *host)
+		const dateLayout = "Mon, 2 Jan 2006 15:04:05 -0700"
+		body := "From: " + *fromAddress + "\r\nTo: " + *toAddresses + "\r\nSubject: " + subject +
+			"\r\nDate: " + time.Now().Format(dateLayout) + "\r\n\r\n" + message
+		domain, _, err := net.SplitHostPort(*serverAddress)
 		if err != nil {
 			log.Fatalf("Error with net.SplitHostPort: %v", err)
 		}
-		auth := smtp.PlainAuth("", *user_address, *password, domain)
-		err = smtp.SendMail(*server_address, auth, *from_address,
-			strings.Fields(*to_addresses), []byte(body))
+		auth := smtp.PlainAuth("", *userAddress, *password, domain)
+		err = smtp.SendMail(*serverAddress, auth, *fromAddress,
+			strings.Fields(*toAddresses), []byte(body))
 		if err != nil {
 			log.Printf("Error with smtp.SendMail: %v\n\n", err)
 			log.Printf("Body: %v\n\n", body)
