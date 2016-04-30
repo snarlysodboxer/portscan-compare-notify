@@ -1,5 +1,6 @@
 # portscan-compare-notify
 Use Golang to parse and notify about Nmap results compared to a list of expected ports
+Meant to be run at regular intervals, via Cron or something similar
 
 #### Usage
 
@@ -56,3 +57,6 @@ docker run --rm \
 ###### TODO
 * Document better
 * Refactor
+* Measure length of time for each scan
+* Log to log file, not just email
+* Convert to passing entire nmap command
