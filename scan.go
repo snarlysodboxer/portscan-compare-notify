@@ -62,9 +62,9 @@ func convertStringToIntSlice(str *string) []int {
 	return integers
 }
 
-func nmapRun(parallelism, portRange, host *string) string {
-	command := exec.Command("nmap", "-PN", "--min-parallelism", *parallelism,
-		"-n", "-sS", fmt.Sprintf("-p%s", *portRange), "--reason", *host)
+func nmapRun(nmapOptionsSlice *[]string) string {
+	command := exec.Command("nmap", *nmapOptionsSlice...)
+	log.Printf("Running: \"nmap %s\"\n", strings.Join(*nmapOptionsSlice, " "))
 	var stdout bytes.Buffer
 	command.Stdout = &stdout
 	var stderr bytes.Buffer
@@ -72,9 +72,14 @@ func nmapRun(parallelism, portRange, host *string) string {
 	err := command.Run()
 	stdOut := stdout.String()
 	stdErr := stderr.String()
-	if err != nil {
-		log.Printf("Error with command.Run():\n%v\n", err)
-		log.Fatalf("This is the stderr:\n%s\n", stdErr)
+	if err != nil || stdErr != "" {
+		if err != nil {
+			log.Printf("Error with command.Run(): %v\n", err)
+		}
+		if stdErr != "" {
+			log.Printf("Stderr:\n%s", stdErr)
+		}
+		log.Fatal("Exiting!")
 	}
 	return stdOut
 }
@@ -133,37 +138,38 @@ func message(expectedPorts, foundPorts []int, notShownBool bool, notShownQuantit
 
 func main() {
 	// Flags
-	//// Host and it's expected ports
-	host := flag.StringP("host", "h", "", "IP or resolvable hostname")
-	portRange := flag.StringP("range", "p", "", "dash separated port range to scan, E.G. '1-65535'")
+	//// NMAP options and expected ports
+	nmapOptions := flag.StringP("nmapoptions", "o", "", "options to pass to NMAP")
 	expectedPortsString := flag.StringP("expected", "e", "",
 		"space separated list of ports that are expected to be found unfiltered (unfiltered = open or closed)")
 
 	//// SMTP stuff
 	toAddresses := flag.StringP("to", "t", "", "space separated list of 'to' address(es)")
 	fromAddress := flag.StringP("from", "f", "", "the 'from' email address")
-	serverAddress := flag.StringP("server", "s", "", "the SMTP server address, E.G 'smtp.example.com:587'")
+	serverAddress := flag.StringP("smtpserver", "s", "", "the SMTP server address, E.G 'smtp.example.com:587'")
 	userAddress := flag.StringP("username", "u", "", "the SMTP username or email address")
 	password := flag.StringP("password", "x", "", "the SMTP user password")
-
-	//// Nmap --min-parallelism
-	parallelism := flag.StringP("parallelism", "m", "", "the Nmap --min-parrallelism setting, E.G. '1024'")
 
 	flag.Usage = func() {
 		fmt.Printf("Usage:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	if flag.NFlag() != 9 {
+	if flag.NFlag() != 7 {
 		flag.Usage()
 		return
 	}
+
+	nmapOptionsSlice := strings.Split(*nmapOptions, " ")
+
+	// Get host out of nmapOptions
+	host := nmapOptionsSlice[len(nmapOptionsSlice)-1]
 
 	// Convert EXPECTED_PORTS string to int slice
 	expectedPorts := convertStringToIntSlice(expectedPortsString)
 
 	// Run Nmap and record output
-	nmapOutput := nmapRun(parallelism, portRange, host)
+	nmapOutput := nmapRun(&nmapOptionsSlice)
 
 	// Grep Nmap output
 	foundPortsString, notShownBool, notShownQuantity := grepNmap(nmapOutput)
@@ -180,7 +186,8 @@ func main() {
 
 	// Email if needed
 	if len(expectedUnfoundPorts) != 0 || len(unexpectedFoundPorts) != 0 || notShownBool {
-		var subject = fmt.Sprintf("Unexpected unfiltered ports found on %s", *host)
+		log.Printf("Unexpected unfiltered ports found on %s, sending Alert Email\n", host)
+		var subject = fmt.Sprintf("Unexpected unfiltered ports found on %s", host)
 		const dateLayout = "Mon, 2 Jan 2006 15:04:05 -0700"
 		body := "From: " + *fromAddress + "\r\nTo: " + *toAddresses + "\r\nSubject: " + subject +
 			"\r\nDate: " + time.Now().Format(dateLayout) + "\r\n\r\n" + message
