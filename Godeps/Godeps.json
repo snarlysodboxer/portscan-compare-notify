@@ -1,0 +1,11 @@
+{
+	"ImportPath": "github.com/snarlysodboxer/portscan-compare-notify",
+	"GoVersion": "go1.6",
+	"GodepVersion": "v62",
+	"Deps": [
+		{
+			"ImportPath": "github.com/ogier/pflag",
+			"Rev": "e4f7d00f344b0954fa3791a8527d10ba7334eceb"
+		}
+	]
+}
