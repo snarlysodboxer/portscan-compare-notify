@@ -1,6 +1,8 @@
 #!/bin/bash
 
-sudo ./scan \
+# sudo ./scan \
+docker run --rm \
+  snarlysodboxer/portscan-compare-notify:latest \
   --nmapoptions="-PN -n -sS -p1-65535 example.com" \
   --expected="22 80 443" \
   --to="myuser@example.com" \

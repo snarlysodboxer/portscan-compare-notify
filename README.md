@@ -51,6 +51,3 @@ docker run --rm \
 ###### TODO
 * Document better
 * Refactor
-* Measure length of time for each scan
-* Log to log file, not just email
-

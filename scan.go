@@ -5,6 +5,7 @@ import (
 	"fmt"
 	flag "github.com/ogier/pflag"
 	"log"
+	"math/rand"
 	"net"
 	"net/smtp"
 	"os/exec"
@@ -136,7 +137,18 @@ func message(expectedPorts, foundPorts []int, notShownBool bool, notShownQuantit
 	return message
 }
 
+func UID(length int) string {
+	rand.Seed(time.Now().UTC().UnixNano())
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		result[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(result)
+}
+
 func main() {
+	log.SetPrefix(fmt.Sprintf("[%s] ", UID(8)))
 	// Flags
 	//// NMAP options and expected ports
 	nmapOptions := flag.StringP("nmapoptions", "o", "", "options to pass to NMAP")
@@ -169,7 +181,10 @@ func main() {
 	expectedPorts := convertStringToIntSlice(expectedPortsString)
 
 	// Run Nmap and record output
+	startTime := time.Now()
 	nmapOutput := nmapRun(&nmapOptionsSlice)
+	endTime := time.Now()
+	log.Printf("The NMAP run took %s", endTime.Sub(startTime))
 
 	// Grep Nmap output
 	foundPortsString, notShownBool, notShownQuantity := grepNmap(nmapOutput)
@@ -187,6 +202,7 @@ func main() {
 	// Email if needed
 	if len(expectedUnfoundPorts) != 0 || len(unexpectedFoundPorts) != 0 || notShownBool {
 		log.Printf("Unexpected unfiltered ports found on %s, sending Alert Email\n", host)
+		log.Printf("Results:\n%s\n", message)
 		var subject = fmt.Sprintf("Unexpected unfiltered ports found on %s", host)
 		const dateLayout = "Mon, 2 Jan 2006 15:04:05 -0700"
 		body := "From: " + *fromAddress + "\r\nTo: " + *toAddresses + "\r\nSubject: " + subject +
@@ -202,5 +218,7 @@ func main() {
 			log.Printf("Error with smtp.SendMail: %v\n\n", err)
 			log.Printf("Body: %v\n\n", body)
 		}
+	} else {
+		log.Println("Results: Everything is as expected")
 	}
 }
